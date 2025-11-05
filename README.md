@@ -54,3 +54,15 @@ List received emails (defaults to 20, pass a number to override):
 ```bash
 rusend received-list 5
 ```
+
+Show a sent email (prints subject and body if available):
+
+```bash
+rusend get <email-id>
+```
+
+Show a received email (prints subject and body if available):
+
+```bash
+rusend received-get <email-id>
+```

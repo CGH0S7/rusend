@@ -188,10 +188,12 @@ async fn main() -> Result<()> {
             let api_key = load_api_key()?;
             let resend = Resend::new(&api_key);
             let email = resend.emails.get(&id).await.context("get failed")?;
-            println!(
-                "ID: {}, Created: {}, From: {}, To: {:?}",
-                email.id, email.created_at, email.from, email.to
-            );
+            println!("ID: {}", email.id);
+            println!("Created: {}", email.created_at);
+            println!("From: {}", email.from);
+            println!("To: {:?}", email.to);
+            println!("Subject: {}", email.subject);
+            print_email_body(email.text.as_deref(), email.html.as_deref());
         }
         Commands::Update { id, scheduled_at } => {
             let api_key = load_api_key()?;
@@ -237,10 +239,12 @@ async fn main() -> Result<()> {
                 .get(&id)
                 .await
                 .context("get receiving failed")?;
-            println!(
-                "ID: {}, Created: {}, From: {}, To: {:?}",
-                r.id, r.created_at, r.from, r.to
-            );
+            println!("ID: {}", r.id);
+            println!("Created: {}", r.created_at);
+            println!("From: {}", r.from);
+            println!("To: {:?}", r.to);
+            println!("Subject: {}", r.subject);
+            print_email_body(r.text.as_deref(), r.html.as_deref());
         }
     }
 
@@ -252,6 +256,16 @@ fn parse_to_vec(s: &str) -> Vec<String> {
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty())
         .collect()
+}
+
+fn print_email_body(text: Option<&str>, html: Option<&str>) {
+    if let Some(text) = text {
+        println!("Text Body:\n{}", text);
+    } else if html.is_some() {
+        println!("Text Body: <unavailable (HTML body only)>");
+    } else {
+        println!("Text Body: <empty>");
+    }
 }
 
 fn project_dirs() -> Result<ProjectDirs> {
