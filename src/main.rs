@@ -1,10 +1,11 @@
+use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Read};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use anyhow::{Context, Result};
 
 // Use types shown in user's snippet
 use resend_rs::types::{CreateEmailBaseOptions, UpdateEmailOptions};
@@ -33,19 +34,31 @@ enum Commands {
     Batch { file: PathBuf },
 
     /// List sent emails
-    List {},
+    List {
+        /// Number of emails to display
+        #[arg(value_name = "COUNT")]
+        count: Option<NonZeroUsize>,
+    },
 
     /// Get a single sent email by id
     Get { id: String },
 
     /// Update an email (e.g. schedule)
-    Update { id: String, #[arg(short, long)] scheduled_at: Option<String> },
+    Update {
+        id: String,
+        #[arg(short, long)]
+        scheduled_at: Option<String>,
+    },
 
     /// Cancel a scheduled email
     Cancel { id: String },
 
     /// List received emails (inbox)
-    ReceivedList {},
+    ReceivedList {
+        /// Number of emails to display
+        #[arg(value_name = "COUNT")]
+        count: Option<NonZeroUsize>,
+    },
 
     /// Get a received email
     ReceivedGet { id: String },
@@ -131,7 +144,8 @@ async fn main() -> Result<()> {
             let resend = Resend::new(&api_key);
 
             let content = fs::read_to_string(&file).context("read batch file")?;
-            let batch: Vec<BatchEmailInput> = serde_json::from_str(&content).context("parse json")?;
+            let batch: Vec<BatchEmailInput> =
+                serde_json::from_str(&content).context("parse json")?;
 
             let emails: Vec<CreateEmailBaseOptions> = batch
                 .into_iter()
@@ -147,14 +161,23 @@ async fn main() -> Result<()> {
                 })
                 .collect();
 
-            let _res = resend.batch.send(emails).await.context("batch send failed")?;
+            let _res = resend
+                .batch
+                .send(emails)
+                .await
+                .context("batch send failed")?;
             println!("Batch send request submitted.");
         }
-        Commands::List {} => {
+        Commands::List { count } => {
             let api_key = load_api_key()?;
             let resend = Resend::new(&api_key);
-            let emails = resend.emails.list(Default::default()).await.context("list failed")?;
-            for email in emails.data {
+            let limit = count.map(NonZeroUsize::get).unwrap_or(20);
+            let emails = resend
+                .emails
+                .list(Default::default())
+                .await
+                .context("list failed")?;
+            for email in emails.data.into_iter().take(limit) {
                 println!(
                     "ID: {}, Created: {}, From: {}, To: {:?}",
                     email.id, email.created_at, email.from, email.to
@@ -177,7 +200,11 @@ async fn main() -> Result<()> {
             if let Some(s) = scheduled_at {
                 upd = upd.with_scheduled_at(&s);
             }
-            let email = resend.emails.update(&id, upd).await.context("update failed")?;
+            let email = resend
+                .emails
+                .update(&id, upd)
+                .await
+                .context("update failed")?;
             println!("Updated email with ID: {}", email.id);
         }
         Commands::Cancel { id } => {
@@ -186,11 +213,16 @@ async fn main() -> Result<()> {
             let canceled = resend.emails.cancel(&id).await.context("cancel failed")?;
             println!("Canceled: {}", canceled.id);
         }
-        Commands::ReceivedList {} => {
+        Commands::ReceivedList { count } => {
             let api_key = load_api_key()?;
             let resend = Resend::new(&api_key);
-            let list = resend.receiving.list(Default::default()).await.context("list receiving failed")?;
-            for email in list.data {
+            let limit = count.map(NonZeroUsize::get).unwrap_or(20);
+            let list = resend
+                .receiving
+                .list(Default::default())
+                .await
+                .context("list receiving failed")?;
+            for email in list.data.into_iter().take(limit) {
                 println!(
                     "ID: {}, Created: {}, From: {}, To: {:?}",
                     email.id, email.created_at, email.from, email.to
@@ -200,7 +232,11 @@ async fn main() -> Result<()> {
         Commands::ReceivedGet { id } => {
             let api_key = load_api_key()?;
             let resend = Resend::new(&api_key);
-            let r = resend.receiving.get(&id).await.context("get receiving failed")?;
+            let r = resend
+                .receiving
+                .get(&id)
+                .await
+                .context("get receiving failed")?;
             println!(
                 "ID: {}, Created: {}, From: {}, To: {:?}",
                 r.id, r.created_at, r.from, r.to
@@ -212,7 +248,10 @@ async fn main() -> Result<()> {
 }
 
 fn parse_to_vec(s: &str) -> Vec<String> {
-    s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+    s.split(',')
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect()
 }
 
 fn project_dirs() -> Result<ProjectDirs> {

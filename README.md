@@ -42,3 +42,15 @@ Then:
 ```bash
 rusend batch batch.json
 ```
+
+List sent emails (defaults to 20, pass a number to override):
+
+```bash
+rusend list 10
+```
+
+List received emails (defaults to 20, pass a number to override):
+
+```bash
+rusend received-list 5
+```
