@@ -70,3 +70,27 @@ rusend received-get <email-id>
 # newest
 rusend received-get
 ```
+
+## Shell Completion
+
+`rusend` can generate completion scripts for various shells.
+
+### Fish
+
+Generate the script and place it in your completions directory:
+
+```bash
+rusend completions fish > ~/.config/fish/completions/rusend.fish
+```
+
+The completion will be available in new shell sessions.
+
+### Bash
+
+Add the following to your `~/.bashrc` or `~/.bash_profile`:
+
+```bash
+source <(rusend completions bash)
+```
+
+Reload your shell for the changes to take effect (e.g., `source ~/.bashrc`).

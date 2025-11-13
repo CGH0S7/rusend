@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, CommandFactory};
+use clap_complete;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -70,6 +71,14 @@ enum Commands {
         #[arg(value_name = "ID")]
         id: Option<String>,
     },
+
+    /// Generate shell completions
+    #[command(hide = true)]
+    Completions {
+        /// The shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Args)]
@@ -113,6 +122,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            clap_complete::generate(shell, &mut cmd, name, &mut io::stdout());
+        }
         Commands::Config { key } => {
             let k = match key {
                 Some(k) => k,
