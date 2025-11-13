@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -40,8 +40,12 @@ enum Commands {
         count: Option<NonZeroUsize>,
     },
 
-    /// Get a single sent email by id
-    Get { id: String },
+    /// Get a single sent email by id (defaults to newest when omitted)
+    Get {
+        /// Email id (omit to show the newest email)
+        #[arg(value_name = "ID")]
+        id: Option<String>,
+    },
 
     /// Update an email (e.g. schedule)
     Update {
@@ -60,8 +64,12 @@ enum Commands {
         count: Option<NonZeroUsize>,
     },
 
-    /// Get a received email
-    ReceivedGet { id: String },
+    /// Get a received email (defaults to newest when omitted)
+    ReceivedGet {
+        /// Email id (omit to show the newest email)
+        #[arg(value_name = "ID")]
+        id: Option<String>,
+    },
 }
 
 #[derive(Args)]
@@ -171,7 +179,7 @@ async fn main() -> Result<()> {
         Commands::List { count } => {
             let api_key = load_api_key()?;
             let resend = Resend::new(&api_key);
-            let limit = count.map(NonZeroUsize::get).unwrap_or(20);
+            let limit = count.map(NonZeroUsize::get).unwrap_or(10);
             let emails = resend
                 .emails
                 .list(Default::default())
@@ -187,7 +195,8 @@ async fn main() -> Result<()> {
         Commands::Get { id } => {
             let api_key = load_api_key()?;
             let resend = Resend::new(&api_key);
-            let email = resend.emails.get(&id).await.context("get failed")?;
+            let email_id = resolve_sent_email_id(&resend, id).await?;
+            let email = resend.emails.get(&email_id).await.context("get failed")?;
             println!("ID: {}", email.id);
             println!("Created: {}", email.created_at);
             println!("From: {}", email.from);
@@ -218,7 +227,7 @@ async fn main() -> Result<()> {
         Commands::ReceivedList { count } => {
             let api_key = load_api_key()?;
             let resend = Resend::new(&api_key);
-            let limit = count.map(NonZeroUsize::get).unwrap_or(20);
+            let limit = count.map(NonZeroUsize::get).unwrap_or(10);
             let list = resend
                 .receiving
                 .list(Default::default())
@@ -234,9 +243,10 @@ async fn main() -> Result<()> {
         Commands::ReceivedGet { id } => {
             let api_key = load_api_key()?;
             let resend = Resend::new(&api_key);
+            let email_id = resolve_received_email_id(&resend, id).await?;
             let r = resend
                 .receiving
-                .get(&id)
+                .get(&email_id)
                 .await
                 .context("get receiving failed")?;
             println!("ID: {}", r.id);
@@ -289,6 +299,38 @@ fn load_api_key() -> Result<String> {
     let path = credentials_path()?;
     let key = fs::read_to_string(path).context("read api key (have you run `rusend config`?)")?;
     Ok(key.trim().to_string())
+}
+
+async fn resolve_sent_email_id(resend: &Resend, provided: Option<String>) -> Result<String> {
+    if let Some(id) = provided {
+        return Ok(id);
+    }
+    let emails = resend
+        .emails
+        .list(Default::default())
+        .await
+        .context("list sent emails to find newest")?;
+    if let Some(email) = emails.data.into_iter().next() {
+        Ok(email.id.to_string())
+    } else {
+        bail!("No sent emails available to display.");
+    }
+}
+
+async fn resolve_received_email_id(resend: &Resend, provided: Option<String>) -> Result<String> {
+    if let Some(id) = provided {
+        return Ok(id);
+    }
+    let emails = resend
+        .receiving
+        .list(Default::default())
+        .await
+        .context("list received emails to find newest")?;
+    if let Some(email) = emails.data.into_iter().next() {
+        Ok(email.id.to_string())
+    } else {
+        bail!("No received emails available to display.");
+    }
 }
 
 // Note: This small CLI focuses on covering the common resend endpoints. Attachments,

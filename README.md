@@ -43,26 +43,30 @@ Then:
 rusend batch batch.json
 ```
 
-List sent emails (defaults to 20, pass a number to override):
+List sent emails (defaults to 10, pass a number to override):
 
 ```bash
 rusend list 10
 ```
 
-List received emails (defaults to 20, pass a number to override):
+List received emails (defaults to 10, pass a number to override):
 
 ```bash
 rusend received-list 5
 ```
 
-Show a sent email (prints subject and body if available):
+Show a sent email (prints subject and body if available, omit the id to show the newest message):
 
 ```bash
 rusend get <email-id>
+# newest
+rusend get
 ```
 
-Show a received email (prints subject and body if available):
+Show a received email (prints subject and body if available, omit the id to show the newest message):
 
 ```bash
 rusend received-get <email-id>
+# newest
+rusend received-get
 ```
