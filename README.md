@@ -95,6 +95,16 @@ rusend completions fish > ~/.config/fish/completions/rusend.fish
 
 The completion will be available in new shell sessions.
 
+### Zsh
+
+Add the following to your `~/.zshrc`: 
+
+```bash
+source <(rusend completions zsh)
+```
+
+Reload your shell for the changes to take effect (e.g., `source ~/.zshrc`).
+
 ### Bash
 
 Add the following to your `~/.bashrc` or `~/.bash_profile`:
