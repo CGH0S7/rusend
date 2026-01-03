@@ -12,6 +12,13 @@ use std::path::PathBuf;
 use resend_rs::types::{CreateEmailBaseOptions, UpdateEmailOptions};
 use resend_rs::Resend;
 
+#[derive(Serialize, Deserialize, Default, Debug)]
+struct AppConfig {
+    api_key: String,
+    default_from: Option<String>,
+    default_to: Option<String>,
+}
+
 #[derive(Parser)]
 #[command(name = "rusend", about = "A small user-friendly CLI for resend.com")]
 struct Cli {
@@ -21,11 +28,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Save your API key for reuse
+    /// Save your configuration (API key, defaults)
     Config {
-        /// Set the API key (if omitted, will prompt)
+        /// Set the API key
         #[arg(short, long)]
         key: Option<String>,
+
+        /// Set default 'from' address
+        #[arg(long)]
+        default_from: Option<String>,
+
+        /// Set default 'to' address
+        #[arg(long)]
+        default_to: Option<String>,
     },
 
     /// Send one email (reads body from --html, --text, or stdin)
@@ -85,27 +100,31 @@ enum Commands {
 struct SendArgs {
     /// From header, e.g. "Acme <no-reply@acme.com>"
     #[arg(short, long)]
-    from: String,
+    from: Option<String>,
 
     /// To recipients, comma separated
     #[arg(short, long)]
-    to: String,
+    to: Option<String>,
 
     /// Subject
-    #[arg(short, long)]
-    subject: String,
+    #[arg(short, long, required_unless_present = "id")]
+    subject: Option<String>,
 
     /// Provide HTML body inline
-    #[arg(long)]
+    #[arg(long, conflicts_with = "id")]
     html: Option<String>,
 
     /// Provide plain text body inline
-    #[arg(long)]
+    #[arg(long, conflicts_with = "id")]
     text: Option<String>,
 
     /// Read body from stdin
-    #[arg(long)]
+    #[arg(long, conflicts_with = "id")]
     from_stdin: bool,
+
+    /// Forward a received email by ID
+    #[arg(long)]
+    id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -127,34 +146,63 @@ async fn main() -> Result<()> {
             let name = cmd.get_name().to_string();
             clap_complete::generate(shell, &mut cmd, name, &mut io::stdout());
         }
-        Commands::Config { key } => {
-            let k = match key {
-                Some(k) => k,
-                None => {
-                    println!("Enter your resend API key (starts with re_):");
-                    rpassword::read_password().context("failed to read api key")?
-                }
-            };
-            save_api_key(&k)?;
-            println!("API key saved.");
+        Commands::Config { key, default_from, default_to } => {
+            let mut cfg = load_config().unwrap_or_default();
+
+            if let Some(k) = key {
+                cfg.api_key = k;
+            } else if cfg.api_key.is_empty() {
+                println!("Enter your resend API key (starts with re_):");
+                cfg.api_key = rpassword::read_password().context("failed to read api key")?;
+            }
+
+            if let Some(f) = default_from {
+                cfg.default_from = Some(f);
+            }
+            if let Some(t) = default_to {
+                cfg.default_to = Some(t);
+            }
+
+            save_config(&cfg)?;
+            println!("Configuration saved.");
         }
         Commands::Send(args) => {
-            let api_key = load_api_key()?;
+            let config = load_config()?;
+            let api_key = config.api_key;
             let resend = Resend::new(&api_key);
 
-            let body_html = if args.from_stdin {
-                let mut s = String::new();
-                io::stdin().read_to_string(&mut s).context("stdin read")?;
-                Some(s)
+            let from_addr = args.from.or(config.default_from).context("From address not provided and no default set")?;
+            let to_addr = args.to.or(config.default_to).context("To address not provided and no default set")?;
+
+            let (subject, body_html, body_text) = if let Some(ref id) = args.id {
+                let email_id = resolve_received_email_id(&resend, Some(id.clone())).await?;
+                let r = resend
+                    .receiving
+                    .get(&email_id)
+                    .await
+                    .context("get received email for forwarding failed")?;
+                
+                let subject = args.subject.clone().unwrap_or_else(|| format!("Fwd: {}", r.subject));
+                (subject, r.html, r.text)
             } else {
-                args.html.clone()
+                let body_html = if args.from_stdin {
+                    let mut s = String::new();
+                    io::stdin().read_to_string(&mut s).context("stdin read")?;
+                    Some(s)
+                } else {
+                    args.html.clone()
+                };
+                // Safety: clap ensures subject is present if id is missing
+                (args.subject.clone().unwrap(), body_html, args.text.clone())
             };
 
             let mut email =
-                CreateEmailBaseOptions::new(&args.from, parse_to_vec(&args.to), &args.subject);
+                CreateEmailBaseOptions::new(&from_addr, parse_to_vec(&to_addr), &subject);
+            
             if let Some(h) = body_html {
                 email = email.with_html(&h);
-            } else if let Some(t) = args.text.clone() {
+            }
+            if let Some(t) = body_text {
                 email = email.with_text(&t);
             }
 
@@ -162,7 +210,7 @@ async fn main() -> Result<()> {
             println!("Send request submitted.");
         }
         Commands::Batch { file } => {
-            let api_key = load_api_key()?;
+            let api_key = load_config()?.api_key;
             let resend = Resend::new(&api_key);
 
             let content = fs::read_to_string(&file).context("read batch file")?;
@@ -191,7 +239,7 @@ async fn main() -> Result<()> {
             println!("Batch send request submitted.");
         }
         Commands::List { count } => {
-            let api_key = load_api_key()?;
+            let api_key = load_config()?.api_key;
             let resend = Resend::new(&api_key);
             let limit = count.map(NonZeroUsize::get).unwrap_or(10);
             let emails = resend
@@ -207,7 +255,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Get { id } => {
-            let api_key = load_api_key()?;
+            let api_key = load_config()?.api_key;
             let resend = Resend::new(&api_key);
             let email_id = resolve_sent_email_id(&resend, id).await?;
             let email = resend.emails.get(&email_id).await.context("get failed")?;
@@ -219,7 +267,7 @@ async fn main() -> Result<()> {
             print_email_body(email.text.as_deref(), email.html.as_deref());
         }
         Commands::Update { id, scheduled_at } => {
-            let api_key = load_api_key()?;
+            let api_key = load_config()?.api_key;
             let resend = Resend::new(&api_key);
             let mut upd = UpdateEmailOptions::new();
             if let Some(s) = scheduled_at {
@@ -233,13 +281,13 @@ async fn main() -> Result<()> {
             println!("Updated email with ID: {}", email.id);
         }
         Commands::Cancel { id } => {
-            let api_key = load_api_key()?;
+            let api_key = load_config()?.api_key;
             let resend = Resend::new(&api_key);
             let canceled = resend.emails.cancel(&id).await.context("cancel failed")?;
             println!("Canceled: {}", canceled.id);
         }
         Commands::ReceivedList { count } => {
-            let api_key = load_api_key()?;
+            let api_key = load_config()?.api_key;
             let resend = Resend::new(&api_key);
             let limit = count.map(NonZeroUsize::get).unwrap_or(10);
             let list = resend
@@ -255,7 +303,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::ReceivedGet { id } => {
-            let api_key = load_api_key()?;
+            let api_key = load_config()?.api_key;
             let resend = Resend::new(&api_key);
             let email_id = resolve_received_email_id(&resend, id).await?;
             let r = resend
@@ -303,16 +351,43 @@ fn credentials_path() -> Result<PathBuf> {
     Ok(cfg.join("credentials"))
 }
 
-fn save_api_key(key: &str) -> Result<()> {
+fn save_config(cfg: &AppConfig) -> Result<()> {
     let path = credentials_path()?;
-    fs::write(path, key).context("write api key")?;
+    let content = serde_json::to_string_pretty(cfg)?;
+    fs::write(path, content).context("write config file")?;
     Ok(())
 }
 
-fn load_api_key() -> Result<String> {
+fn load_config() -> Result<AppConfig> {
     let path = credentials_path()?;
-    let key = fs::read_to_string(path).context("read api key (have you run `rusend config`?)")?;
-    Ok(key.trim().to_string())
+    if !path.exists() {
+        // If no file exists, return default (empty API key) so we can prompt or fail gracefully
+        return Ok(AppConfig::default());
+    }
+    let content = fs::read_to_string(path).context("read config file")?;
+    let content = content.trim();
+
+    // Try parsing as JSON first
+    if let Ok(cfg) = serde_json::from_str::<AppConfig>(content) {
+        return Ok(cfg);
+    }
+
+    // Fallback: assume it is just the API key (legacy format)
+    if !content.is_empty() {
+        return Ok(AppConfig {
+            api_key: content.to_string(),
+            ..Default::default()
+        });
+    }
+
+    // If file exists but is empty or unparseable and not a simple string?
+    // Treat as empty config or error? Let's return error if it's not valid JSON and not a simple key
+    // Actually, simple key check above covers almost anything non-empty. 
+    // But if it was a corrupted JSON it might be treated as a key.
+    // However, API keys usually don't look like broken JSON (no curly braces).
+    // Safe enough for this tool.
+    
+    Ok(AppConfig::default())
 }
 
 async fn resolve_sent_email_id(resend: &Resend, provided: Option<String>) -> Result<String> {

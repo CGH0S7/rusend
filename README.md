@@ -17,15 +17,19 @@ cargo build --release
 
 ## Examples
 
-Save API key:
+Save API key and optional defaults:
 
 ```bash
-rusend config --key re_xxxxxxxxx
+rusend config --key re_xxxxxxxxx --default-from "Acme <no-reply@acme.com>" --default-to "admin@example.com"
 ```
 
 Send an email (body from stdin):
 
 ```bash
+# From/To are optional if defaults are configured
+echo "<p>hello</p>" | rusend send -s "hi" --from-stdin
+
+# Or override them
 echo "<p>hello</p>" | rusend send -f "Acme <no-reply@acme.com>" -t "you@example.com" -s "hi" --from-stdin
 ```
 
@@ -69,6 +73,12 @@ Show a received email (prints subject and body if available, omit the id to show
 rusend received-get <email-id>
 # newest
 rusend received-get
+```
+
+Forward a received email:
+
+```bash
+rusend send --from "Acme <no-reply@acme.com>" --to "you@example.com" --id <received-email-id>
 ```
 
 ## Shell Completion
